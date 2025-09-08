@@ -1,0 +1,10 @@
+<config>
+    <!-- 1. Path to compiled classes -->
+    <classPath>C:\Users\ACER\IdeaProjects\Sootup\target\classes</classPath>
+
+    <!-- 2. Fully-qualified class name (package + class name) -->
+    <className>org.example.programs.specified.BreakStatement</className>
+
+    <!-- 3. Method name inside that class -->
+    <methodName>sayHello</methodName>
+</config>
