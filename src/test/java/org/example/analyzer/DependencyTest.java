@@ -6,6 +6,7 @@ import org.example.analyzer.dependency.DefUseAnalyzer;
 import org.example.analyzer.dependency.DependencyAnalyzer;
 import org.example.analyzer.dependency.DependencyResult;
 import org.example.analyzer.dependency.DominatorAnalyzer;
+import org.example.analyzer.dependency.LoopAnalyzer;
 
 import sootup.core.graph.StmtGraph;
 import sootup.core.jimple.common.stmt.Stmt;
@@ -134,6 +135,45 @@ import java.util.Optional;
                 DominatorAnalyzer domAnalyzer = new DominatorAnalyzer(cfg);
                 domAnalyzer.printDominators();
                 domAnalyzer.printDominatorTree();
+            }
+        }
+
+
+
+        public void testLoopAnalysis() {
+            analyzeLoopsForClass("org.example.programs.specified.LoopTest");
+        }
+
+        private void analyzeLoopsForClass(String className) {
+            System.out.println("\n" + "=".repeat(60));
+            System.out.println("ANALYZING LOOPS FOR: " + className);
+            System.out.println("=".repeat(60));
+
+            ClassType classType = view.getIdentifierFactory().getClassType(className);
+            Optional<JavaSootClass> opt = view.getClass(classType);
+
+            if (opt.isEmpty()) {
+                System.out.println("Class not found: " + className);
+                return;
+            }
+
+            JavaSootClass sc = opt.get();
+
+            for (JavaSootMethod m : sc.getMethods()) {
+                System.out.println("\n--- METHOD: " + m.getName() + " ---");
+
+                Body body = m.getBody();
+                if (body == null) {
+                    System.out.println("  <no body>");
+                    continue;
+                }
+
+                StmtGraph<?> cfg = body.getStmtGraph();
+
+                // Test loop analysis
+                DominatorAnalyzer domAnalyzer = new DominatorAnalyzer(cfg);
+                LoopAnalyzer loopAnalyzer = new LoopAnalyzer(cfg, domAnalyzer);
+                loopAnalyzer.printLoopAnalysis();
             }
         }
     }

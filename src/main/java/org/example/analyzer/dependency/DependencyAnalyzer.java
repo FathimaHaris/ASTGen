@@ -9,27 +9,33 @@ public class DependencyAnalyzer {
     private DefUseAnalyzer defUseAnalyzer;
     private Map<Stmt, Set<Stmt>> reachingDefinitions;
     private DominatorAnalyzer dominatorAnalyzer;
+    private LoopAnalyzer loopAnalyzer;
 
     public DependencyAnalyzer(StmtGraph<?> cfg, DefUseAnalyzer defUseAnalyzer) {
         this.cfg = cfg;
         this.defUseAnalyzer = defUseAnalyzer;
-        this.dominatorAnalyzer = new DominatorAnalyzer(cfg);
         this.reachingDefinitions = new HashMap<>();
+
+        // Step 1: Compute reaching definitions FIRST
+        analyzeReachingDefinitions();
+
+        // Step 2: Initialize dominator analyzer
+        this.dominatorAnalyzer = new DominatorAnalyzer(cfg);
+
+        // Step 3: Initialize loop analyzer with ALL required parameters
+        this.loopAnalyzer = new LoopAnalyzer(cfg, dominatorAnalyzer, defUseAnalyzer, reachingDefinitions);
     }
 
     public DependencyResult analyze() {
         DependencyResult result = new DependencyResult();
 
-        // Step 1: Perform reaching definitions analysis
-        analyzeReachingDefinitions();
-
-        // Step 2: Analyze data dependencies
+        // Step 1: Analyze data dependencies
         analyzeDataDependencies(result);
 
-        // Step 3: Analyze control dependencies
+        // Step 2: Analyze control dependencies
         analyzeControlDependencies(result);
 
-        // Step 4: Analyze loop dependencies
+        // Step 3: Analyze loop dependencies
         analyzeLoopDependencies(result);
 
         return result;
@@ -68,16 +74,14 @@ public class DependencyAnalyzer {
 
                 // GEN: This statement's definitions
                 if (!defUseAnalyzer.getDefSet(stmt).isEmpty()) {
-                    outSet.add(stmt); // This statement generates new definitions
+                    outSet.add(stmt);
                 }
 
                 // KILL: Remove definitions killed by this statement
-                // (other statements that define the same variables)
                 for (Stmt defStmt : newInSet) {
                     Set<String> defVars = defUseAnalyzer.getDefSet(defStmt);
                     Set<String> currentDefVars = defUseAnalyzer.getDefSet(stmt);
 
-                    // If this statement defines variables that were defined elsewhere, kill those old definitions
                     for (String var : currentDefVars) {
                         if (defVars.contains(var)) {
                             outSet.remove(defStmt);
@@ -108,12 +112,10 @@ public class DependencyAnalyzer {
             System.out.println("  Reaching defs: " + reachingDefinitions.get(stmt).size());
 
             for (String usedVar : usedVars) {
-                // Find which reaching definitions define this variable
                 for (Stmt defStmt : reachingDefinitions.get(stmt)) {
                     Set<String> defVars = defUseAnalyzer.getDefSet(defStmt);
 
                     if (defVars.contains(usedVar)) {
-                        // Found a RAW (Read After Write) dependency!
                         Dependency dep = new Dependency(
                                 Dependency.Type.RAW,
                                 defStmt,
@@ -126,7 +128,6 @@ public class DependencyAnalyzer {
                 }
             }
 
-            // Check for WAR and WAW dependencies
             analyzeAntiAndOutputDependencies(stmt, result);
         }
     }
@@ -135,13 +136,11 @@ public class DependencyAnalyzer {
         Set<String> defVars = defUseAnalyzer.getDefSet(stmt);
 
         for (String defVar : defVars) {
-            // Look for statements that use this variable before it's redefined
             for (Stmt otherStmt : reachingDefinitions.keySet()) {
                 if (otherStmt.equals(stmt)) continue;
 
                 Set<String> otherUses = defUseAnalyzer.getUseSet(otherStmt);
                 if (otherUses.contains(defVar)) {
-                    // WAR (Write After Read) - anti-dependency
                     Dependency dep = new Dependency(
                             Dependency.Type.WAR,
                             otherStmt,
@@ -153,7 +152,6 @@ public class DependencyAnalyzer {
 
                 Set<String> otherDefs = defUseAnalyzer.getDefSet(otherStmt);
                 if (otherDefs.contains(defVar)) {
-                    // WAW (Write After Write) - output dependency
                     Dependency dep = new Dependency(
                             Dependency.Type.WAW,
                             otherStmt,
@@ -168,20 +166,16 @@ public class DependencyAnalyzer {
 
     private void analyzeControlDependencies(DependencyResult result) {
         System.out.println("\n=== ANALYZING CONTROL DEPENDENCIES ===");
-        // Simplified control dependency analysis
-        // In real implementation, we'd use post-dominator trees
 
         for (Object node : cfg.getNodes()) {
             if (!(node instanceof Stmt)) continue;
 
             Stmt stmt = (Stmt) node;
 
-            // Look for branch statements that control this statement
             for (Object predObj : cfg.predecessors(stmt)) {
                 if (predObj instanceof Stmt) {
                     Stmt pred = (Stmt) predObj;
 
-                    // If predecessor is a branch statement (if, goto, etc.)
                     if (isBranchStatement(pred)) {
                         result.addControlDependency(stmt, pred);
                         System.out.println("Control dep: " + pred + " → " + stmt);
@@ -193,86 +187,17 @@ public class DependencyAnalyzer {
 
     private boolean isBranchStatement(Stmt stmt) {
         String stmtStr = stmt.toString();
-        // Simple heuristic - real implementation would use proper type checking
         return stmtStr.contains("if ") || stmtStr.contains("goto") ||
                 stmtStr.contains("switch") || stmtStr.contains("break");
     }
 
     private void analyzeLoopDependencies(DependencyResult result) {
         System.out.println("\n=== ANALYZING LOOP DEPENDENCIES ===");
-        // Simplified loop analysis
-        // Real implementation would identify natural loops and analyze carried dependencies
-
-        // For now, we'll just detect simple loop patterns
-        detectSimpleLoops(result);
+        // Use the proper loop analyzer instead of simple detection
+        loopAnalyzer.analyzeLoopDependencies(result);
     }
 
-    private void detectSimpleLoops(DependencyResult result) {
-        // Very basic loop detection - looks for backward edges in CFG
-        Set<Stmt> visited = new HashSet<>();
-        Set<Stmt> inLoop = new HashSet<>();
-
-        for (Object node : cfg.getNodes()) {
-            if (!(node instanceof Stmt)) continue;
-
-            Stmt stmt = (Stmt) node;
-            if (!visited.contains(stmt)) {
-                detectLoopsDFS(stmt, visited, new HashSet<>(), inLoop, result);
-            }
-        }
-
-        // Analyze loop-carried dependencies
-        analyzeLoopCarriedDependencies(inLoop, result);
-    }
-
-    private void detectLoopsDFS(Stmt current, Set<Stmt> visited, Set<Stmt> stack,
-                                Set<Stmt> inLoop, DependencyResult result) {
-        visited.add(current);
-        stack.add(current);
-
-        for (Object succObj : cfg.successors(current)) {
-            if (succObj instanceof Stmt) {
-                Stmt succ = (Stmt) succObj;
-
-                if (stack.contains(succ)) {
-                    // Found a back edge - loop detected!
-                    inLoop.add(current);
-                    inLoop.add(succ);
-                    System.out.println("Loop detected between: " + current + " and " + succ);
-                } else if (!visited.contains(succ)) {
-                    detectLoopsDFS(succ, visited, stack, inLoop, result);
-                }
-            }
-        }
-
-        stack.remove(current);
-    }
-
-    private void analyzeLoopCarriedDependencies(Set<Stmt> loopStatements, DependencyResult result) {
-        for (Stmt stmt : loopStatements) {
-            Set<String> defVars = defUseAnalyzer.getDefSet(stmt);
-
-            for (String var : defVars) {
-                // Check if this variable is used in other loop statements
-                // (simplified loop-carried dependency detection)
-                for (Stmt otherStmt : loopStatements) {
-                    if (!otherStmt.equals(stmt)) {
-                        Set<String> uses = defUseAnalyzer.getUseSet(otherStmt);
-                        if (uses.contains(var)) {
-                            LoopDependency loopDep = new LoopDependency(
-                                    true,  // carried dependency
-                                    var,
-                                    1      // distance 1 (simplified)
-                            );
-                            result.addLoopDependency(otherStmt, loopDep);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Helper method to print reaching definitions
+    // Helper methods
     public void printReachingDefinitions() {
         System.out.println("\n=== REACHING DEFINITIONS ===");
         for (Stmt stmt : reachingDefinitions.keySet()) {
@@ -287,5 +212,9 @@ public class DependencyAnalyzer {
     public void printDominatorAnalysis() {
         dominatorAnalyzer.printDominators();
         dominatorAnalyzer.printDominatorTree();
+    }
+
+    public void printLoopAnalysis() {
+        loopAnalyzer.printLoopAnalysis();
     }
 }
