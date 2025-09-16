@@ -1,6 +1,7 @@
 package org.example.analyzer.dependency;
 
 import sootup.core.jimple.common.stmt.Stmt;
+import sootup.core.jimple.basic.Value;
 
 public class LoopDependency {
     public enum Type {
@@ -10,13 +11,13 @@ public class LoopDependency {
     }
 
     private Type type;
-    private String variable;
-    private int distance;      // For carried dependencies
-    private Stmt sourceStmt;   // Definition statement
-    private Stmt targetStmt;   // Use statement
-    private Loop loop;         // Which loop this belongs to
+    private Value variable;
+    private int distance;
+    private Stmt sourceStmt;
+    private Stmt targetStmt;
+    private Loop loop;
 
-    public LoopDependency(Type type, String variable, int distance,
+    public LoopDependency(Type type, Value variable, int distance,
                           Stmt sourceStmt, Stmt targetStmt, Loop loop) {
         this.type = type;
         this.variable = variable;
@@ -28,7 +29,7 @@ public class LoopDependency {
 
     // Getters
     public Type getType() { return type; }
-    public String getVariable() { return variable; }
+    public Value getVariable() { return variable; }
     public int getDistance() { return distance; }
     public Stmt getSourceStmt() { return sourceStmt; }
     public Stmt getTargetStmt() { return targetStmt; }

@@ -16,80 +16,61 @@ public class DependencyAnalyzer {
         this.defUseAnalyzer = defUseAnalyzer;
         this.reachingDefinitions = new HashMap<>();
 
-        // Step 1: Compute reaching definitions FIRST
         analyzeReachingDefinitions();
-
-        // Step 2: Initialize dominator analyzer
         this.dominatorAnalyzer = new DominatorAnalyzer(cfg);
-
-        // Step 3: Initialize loop analyzer with ALL required parameters
         this.loopAnalyzer = new LoopAnalyzer(cfg, dominatorAnalyzer, defUseAnalyzer, reachingDefinitions);
     }
 
     public DependencyResult analyze() {
         DependencyResult result = new DependencyResult();
 
-        // Step 1: Analyze data dependencies
         analyzeDataDependencies(result);
-
-        // Step 2: Analyze control dependencies
         analyzeControlDependencies(result);
-
-        // Step 3: Analyze loop dependencies
         analyzeLoopDependencies(result);
 
         return result;
     }
 
     private void analyzeReachingDefinitions() {
-        // Initialize reaching definitions for each statement
-        for (Object node : cfg.getNodes()) {
-            if (node instanceof Stmt) {
-                Stmt stmt = (Stmt) node;
-                reachingDefinitions.put(stmt, new HashSet<>());
-            }
+        // Initialize
+        for (Stmt stmt : cfg.getStmts()) {
+            reachingDefinitions.put(stmt, new HashSet<>());
         }
 
-        // Worklist algorithm for reaching definitions
         boolean changed;
         do {
             changed = false;
 
-            for (Object node : cfg.getNodes()) {
-                if (!(node instanceof Stmt)) continue;
-
-                Stmt stmt = (Stmt) node;
+            for (Stmt stmt : cfg.getStmts()) {
                 Set<Stmt> newInSet = new HashSet<>();
 
-                // Get reaching definitions from all predecessors
-                for (Object predObj : cfg.predecessors(stmt)) {
-                    if (predObj instanceof Stmt) {
-                        Stmt pred = (Stmt) predObj;
-                        newInSet.addAll(reachingDefinitions.get(pred));
-                    }
+                // Union of predecessors' OUT sets
+                for (Stmt pred : cfg.predecessors(stmt)) {
+                    newInSet.addAll(reachingDefinitions.get(pred));
                 }
 
-                // Apply GEN and KILL sets
+                // Apply GEN and KILL
                 Set<Stmt> outSet = new HashSet<>(newInSet);
 
-                // GEN: This statement's definitions
+                // GEN: This statement defines variables
                 if (!defUseAnalyzer.getDefSet(stmt).isEmpty()) {
                     outSet.add(stmt);
                 }
 
-                // KILL: Remove definitions killed by this statement
-                for (Stmt defStmt : newInSet) {
+                // KILL: Remove definitions that are killed by this statement
+                Set<String> currentDefs = defUseAnalyzer.getDefSet(stmt);
+                Iterator<Stmt> iter = outSet.iterator();
+                while (iter.hasNext()) {
+                    Stmt defStmt = iter.next();
                     Set<String> defVars = defUseAnalyzer.getDefSet(defStmt);
-                    Set<String> currentDefVars = defUseAnalyzer.getDefSet(stmt);
-
-                    for (String var : currentDefVars) {
+                    for (String var : currentDefs) {
                         if (defVars.contains(var)) {
-                            outSet.remove(defStmt);
+                            iter.remove();
+                            break;
                         }
                     }
                 }
 
-                // Check if reaching definitions changed
                 if (!outSet.equals(reachingDefinitions.get(stmt))) {
                     reachingDefinitions.put(stmt, outSet);
                     changed = true;
@@ -99,31 +80,15 @@ public class DependencyAnalyzer {
     }
 
     private void analyzeDataDependencies(DependencyResult result) {
-        System.out.println("\n=== ANALYZING DATA DEPENDENCIES ===");
-
-        for (Object node : cfg.getNodes()) {
-            if (!(node instanceof Stmt)) continue;
-
-            Stmt stmt = (Stmt) node;
+        for (Stmt stmt : cfg.getStmts()) {
             Set<String> usedVars = defUseAnalyzer.getUseSet(stmt);
-
-            System.out.println("Analyzing stmt: " + stmt);
-            System.out.println("  Uses: " + usedVars);
-            System.out.println("  Reaching defs: " + reachingDefinitions.get(stmt).size());
 
             for (String usedVar : usedVars) {
                 for (Stmt defStmt : reachingDefinitions.get(stmt)) {
                     Set<String> defVars = defUseAnalyzer.getDefSet(defStmt);
-
                     if (defVars.contains(usedVar)) {
-                        Dependency dep = new Dependency(
-                                Dependency.Type.RAW,
-                                defStmt,
-                                stmt,
-                                usedVar
-                        );
+                        Dependency dep = new Dependency(Dependency.Type.RAW, defStmt, stmt, usedVar);
                         result.addDataDependency(dep);
-                        System.out.println("  FOUND RAW: " + defStmt + " → " + stmt + " for var: " + usedVar);
                     }
                 }
             }
@@ -139,61 +104,46 @@ public class DependencyAnalyzer {
             for (Stmt otherStmt : reachingDefinitions.keySet()) {
                 if (otherStmt.equals(stmt)) continue;
 
-                Set<String> otherUses = defUseAnalyzer.getUseSet(otherStmt);
-                if (otherUses.contains(defVar)) {
-                    Dependency dep = new Dependency(
-                            Dependency.Type.WAR,
-                            otherStmt,
-                            stmt,
-                            defVar
-                    );
-                    result.addDataDependency(dep);
+                Set<String> otherDefs = defUseAnalyzer.getDefSet(otherStmt);
+
+                if (otherDefs.contains(defVar)) {
+                    // Existing WAW dependency
+                    Dependency wawDep = new Dependency(Dependency.Type.WAW, otherStmt, stmt, defVar);
+                    result.addDataDependency(wawDep);
+
+                    // New DEF_ORDER dependency
+                    if (dominatorAnalyzer.dominates(otherStmt, stmt)) {
+                        Dependency defOrderDep = new Dependency(Dependency.Type.DEF_ORDER, otherStmt, stmt, defVar);
+                        result.addDataDependency(defOrderDep);
+                    }
                 }
 
-                Set<String> otherDefs = defUseAnalyzer.getDefSet(otherStmt);
-                if (otherDefs.contains(defVar)) {
-                    Dependency dep = new Dependency(
-                            Dependency.Type.WAW,
-                            otherStmt,
-                            stmt,
-                            defVar
-                    );
-                    result.addDataDependency(dep);
+                Set<String> otherUses = defUseAnalyzer.getUseSet(otherStmt);
+                if (otherUses.contains(defVar)) {
+                    Dependency warDep = new Dependency(Dependency.Type.WAR, otherStmt, stmt, defVar);
+                    result.addDataDependency(warDep);
                 }
             }
         }
     }
 
+
     private void analyzeControlDependencies(DependencyResult result) {
-        System.out.println("\n=== ANALYZING CONTROL DEPENDENCIES ===");
-
-        for (Object node : cfg.getNodes()) {
-            if (!(node instanceof Stmt)) continue;
-
-            Stmt stmt = (Stmt) node;
-
-            for (Object predObj : cfg.predecessors(stmt)) {
-                if (predObj instanceof Stmt) {
-                    Stmt pred = (Stmt) predObj;
-
-                    if (isBranchStatement(pred)) {
-                        result.addControlDependency(stmt, pred);
-                        System.out.println("Control dep: " + pred + " → " + stmt);
-                    }
+        for (Stmt stmt : cfg.getStmts()) {
+            for (Stmt pred : cfg.predecessors(stmt)) {
+                if (isBranchStatement(pred)) {
+                    result.addControlDependency(stmt, pred);
                 }
             }
         }
     }
 
     private boolean isBranchStatement(Stmt stmt) {
-        String stmtStr = stmt.toString();
-        return stmtStr.contains("if ") || stmtStr.contains("goto") ||
-                stmtStr.contains("switch") || stmtStr.contains("break");
+        return stmt instanceof JIfStmt || stmt instanceof JGotoStmt ||
+                stmt instanceof JLookupSwitchStmt || stmt instanceof JTableSwitchStmt;
     }
 
     private void analyzeLoopDependencies(DependencyResult result) {
-        System.out.println("\n=== ANALYZING LOOP DEPENDENCIES ===");
-        // Use the proper loop analyzer instead of simple detection
         loopAnalyzer.analyzeLoopDependencies(result);
     }
 
@@ -203,9 +153,6 @@ public class DependencyAnalyzer {
         for (Stmt stmt : reachingDefinitions.keySet()) {
             System.out.println("Stmt: " + stmt);
             System.out.println("  Reaching defs: " + reachingDefinitions.get(stmt).size());
-            for (Stmt def : reachingDefinitions.get(stmt)) {
-                System.out.println("    - " + def);
-            }
         }
     }
 

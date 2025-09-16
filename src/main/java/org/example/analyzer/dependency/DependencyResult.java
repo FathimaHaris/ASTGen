@@ -29,9 +29,17 @@ public class DependencyResult {
     }
 
     // Getters
-    public Map<Stmt, Set<Dependency>> getDataDependencies() { return dataDependencies; }
-    public Map<Stmt, Set<Dependency>> getControlDependencies() { return controlDependencies; }
-    public Map<Stmt, Set<LoopDependency>> getLoopDependencies() { return loopDependencies; }
+    public Map<Stmt, Set<Dependency>> getDataDependencies() {
+        return Collections.unmodifiableMap(dataDependencies);
+    }
+
+    public Map<Stmt, Set<Dependency>> getControlDependencies() {
+        return Collections.unmodifiableMap(controlDependencies);
+    }
+
+    public Map<Stmt, Set<LoopDependency>> getLoopDependencies() {
+        return Collections.unmodifiableMap(loopDependencies);
+    }
 
     // Utility methods
     public Set<Dependency> getAllDependenciesForStmt(Stmt stmt) {

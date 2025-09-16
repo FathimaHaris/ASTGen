@@ -1,7 +1,12 @@
 package org.example.analyzer.dependency;
 
 import sootup.core.graph.StmtGraph;
-import sootup.core.jimple.common.stmt.Stmt;
+import sootup.core.jimple.common.stmt.*;
+import sootup.core.jimple.common.expr.*;
+import sootup.core.jimple.basic.Value;
+import sootup.core.model.Body;
+import sootup.core.types.PrimitiveType;
+import sootup.core.jimple.common.constant.IntConstant;
 import java.util.*;
 
 public class LoopAnalyzer {
@@ -11,7 +16,6 @@ public class LoopAnalyzer {
     private Map<Stmt, Set<Stmt>> reachingDefinitions;
     private Map<Stmt, Loop> loops;
     private Map<Stmt, Set<LoopDependency>> loopDependencies;
-    private DependencyResult internalResult; // Store result internally
 
     public LoopAnalyzer(StmtGraph<?> cfg, DominatorAnalyzer dominatorAnalyzer,
                         DefUseAnalyzer defUseAnalyzer, Map<Stmt, Set<Stmt>> reachingDefinitions) {
@@ -21,154 +25,21 @@ public class LoopAnalyzer {
         this.reachingDefinitions = reachingDefinitions;
         this.loops = new HashMap<>();
         this.loopDependencies = new HashMap<>();
-        this.internalResult = new DependencyResult(); // Initialize internal result
-        this.analyze(); // Initialize loops when created
+        analyze();
     }
 
     private void analyze() {
         findNaturalLoops();
         resolveNestedLoops();
-        analyzeLoopDependencies(); // Now this works without parameters
-    }
-
-    // Internal method for initialization
-    private void analyzeLoopDependencies() {
-        System.out.println("\n=== ANALYZING LOOP DEPENDENCIES (INTERNAL) ===");
-
-        for (Loop loop : loops.values()) {
-            analyzeDependenciesInLoop(loop, internalResult);
-        }
-    }
-
-    // Public method for external use
-    public void analyzeLoopDependencies(DependencyResult result) {
-        System.out.println("\n=== ANALYZING LOOP DEPENDENCIES (EXTERNAL) ===");
-
-        // Copy internal results to the provided result
-        for (Map.Entry<Stmt, Set<LoopDependency>> entry : loopDependencies.entrySet()) {
-            for (LoopDependency dep : entry.getValue()) {
-                result.addLoopDependency(entry.getKey(), dep);
-            }
-        }
-    }
-
-    private void analyzeDependenciesInLoop(Loop loop, DependencyResult result) {
-        System.out.println("Analyzing dependencies in loop: " + loop.getHeader());
-
-        // Get all statements in this loop
-        Set<Stmt> loopStatements = loop.getStatements();
-
-        for (Stmt stmt : loopStatements) {
-            loopDependencies.putIfAbsent(stmt, new HashSet<>());
-
-            // Analyze data dependencies within the loop
-            analyzeDataDependenciesInLoop(stmt, loop, loopStatements, result);
-        }
-    }
-
-    private void analyzeDataDependenciesInLoop(Stmt stmt, Loop loop, Set<Stmt> loopStatements, DependencyResult result) {
-        Set<String> uses = defUseAnalyzer.getUseSet(stmt);
-
-        for (String usedVar : uses) {
-            // Find definitions that reach this statement
-            for (Stmt defStmt : reachingDefinitions.get(stmt)) {
-                if (loopStatements.contains(defStmt)) {
-                    // Both statements are in the same loop
-                    Set<String> defs = defUseAnalyzer.getDefSet(defStmt);
-
-                    if (defs.contains(usedVar)) {
-                        // This is a loop dependency!
-                        analyzeLoopDependencyType(defStmt, stmt, usedVar, loop, result);
-                    }
-                }
-            }
-        }
-    }
-
-    private void analyzeLoopDependencyType(Stmt defStmt, Stmt useStmt, String variable, Loop loop, DependencyResult result) {
-        LoopDependency.Type type;
-        int distance = 0;
-
-        if (isLoopCarriedDependency(defStmt, useStmt, variable, loop)) {
-            type = LoopDependency.Type.CARRIED;
-            distance = calculateDependencyDistance(defStmt, useStmt, variable, loop);
-        } else {
-            type = LoopDependency.Type.INDEPENDENT;
-        }
-
-        LoopDependency dep = new LoopDependency(type, variable, distance, defStmt, useStmt, loop);
-        loopDependencies.get(useStmt).add(dep);
-
-        // Add to the overall result
-        result.addLoopDependency(useStmt, dep);
-
-        System.out.println("  Loop dependency: " + dep);
-    }
-
-
-    private boolean isLoopCarriedDependency(Stmt defStmt, Stmt useStmt, String variable, Loop loop) {
-        // Check if this is a loop-carried dependency
-        // Basic heuristic: if it involves array access or induction variables
-
-        String defStr = defStmt.toString();
-        String useStr = useStmt.toString();
-
-        // Array access pattern: a[i] → a[i+1]
-        if (defStr.contains("[") && useStr.contains("[")) {
-            return true;
-        }
-
-        // Induction variable pattern: i → i+1
-        if (defStr.contains("i =") && useStr.contains("i +")) {
-            return true;
-        }
-
-        // Default: assume independent for now
-        return false;
-    }
-
-    private int calculateDependencyDistance(Stmt defStmt, Stmt useStmt, String variable, Loop loop) {
-        // Simple distance calculation
-        // Real implementation would use induction variable analysis
-
-        String defStr = defStmt.toString();
-        String useStr = useStmt.toString();
-
-        // Array access patterns
-        if (defStr.contains("i]") && useStr.contains("i+1]")) return 1;
-        if (defStr.contains("i]") && useStr.contains("i+2]")) return 2;
-        if (defStr.contains("i]") && useStr.contains("i-1]")) return -1;
-
-        // Induction variable patterns
-        if (defStr.contains("i =") && useStr.contains("i + 1")) return 1;
-        if (defStr.contains("i =") && useStr.contains("i + 2")) return 2;
-
-        return 1; // Default distance
+        analyzeLoopDependencies();
     }
 
     private void findNaturalLoops() {
-        System.out.println("\n=== FINDING NATURAL LOOPS ===");
-
-        // Step 1: Find back edges (edge from node to its dominator)
-        for (Object node : cfg.getNodes()) {
-            if (!(node instanceof Stmt)) continue;
-
-            Stmt source = (Stmt) node;
-
-            for (Object succObj : cfg.successors(source)) {
-                if (succObj instanceof Stmt) {
-                    Stmt target = (Stmt) succObj;
-
-                    // Check if target dominates source (back edge condition)
-                    if (dominatorAnalyzer.dominates(target, source)) {
-                        System.out.println("Found back edge: " + source + " → " + target);
-
-                        // target is the loop header
-                        Loop loop = loops.computeIfAbsent(target, k -> new Loop(target));
-
-                        // Find all statements in the loop body
-                        findLoopBody(loop, source);
-                    }
+        for (Stmt source : cfg.getStmts()) {
+            for (Stmt target : cfg.successors(source)) {
+                if (dominatorAnalyzer.dominates(target, source)) {
+                    Loop loop = loops.computeIfAbsent(target, k -> new Loop(target));
+                    findLoopBody(loop, source);
                 }
             }
         }
@@ -183,15 +54,10 @@ public class LoopAnalyzer {
 
             if (!loop.contains(current)) {
                 loop.addStatement(current);
-                System.out.println("  Added to loop: " + current);
 
-                // Add all predecessors except the header
-                for (Object predObj : cfg.predecessors(current)) {
-                    if (predObj instanceof Stmt) {
-                        Stmt pred = (Stmt) predObj;
-                        if (!pred.equals(loop.getHeader())) {
-                            worklist.push(pred);
-                        }
+                for (Stmt pred : cfg.predecessors(current)) {
+                    if (!pred.equals(loop.getHeader())) {
+                        worklist.push(pred);
                     }
                 }
             }
@@ -199,8 +65,6 @@ public class LoopAnalyzer {
     }
 
     private void resolveNestedLoops() {
-        System.out.println("\n=== RESOLVING NESTED LOOPS ===");
-
         List<Loop> loopList = new ArrayList<>(loops.values());
 
         for (int i = 0; i < loopList.size(); i++) {
@@ -209,10 +73,8 @@ public class LoopAnalyzer {
                 Loop loop2 = loopList.get(j);
 
                 if (isNested(loop1, loop2)) {
-                    System.out.println("Nested loop: " + loop2.getHeader() + " inside " + loop1.getHeader());
                     loop1.addNestedLoop(loop2);
                 } else if (isNested(loop2, loop1)) {
-                    System.out.println("Nested loop: " + loop1.getHeader() + " inside " + loop2.getHeader());
                     loop2.addNestedLoop(loop1);
                 }
             }
@@ -220,18 +82,135 @@ public class LoopAnalyzer {
     }
 
     private boolean isNested(Loop outer, Loop inner) {
-        // Check if inner loop is completely contained within outer loop
-        // but not equal to outer loop
-        if (outer.equals(inner)) {
-            return false;
-        }
+        if (outer.equals(inner)) return false;
 
         for (Stmt stmt : inner.getStatements()) {
-            if (!outer.contains(stmt)) {
-                return false;
-            }
+            if (!outer.contains(stmt)) return false;
         }
         return true;
+    }
+
+    private void analyzeLoopDependencies() {
+        for (Loop loop : loops.values()) {
+            analyzeDependenciesInLoop(loop);
+        }
+    }
+
+    private void analyzeDependenciesInLoop(Loop loop) {
+        Set<Stmt> loopStatements = loop.getStatements();
+
+        for (Stmt stmt : loopStatements) {
+            loopDependencies.putIfAbsent(stmt, new HashSet<>());
+            analyzeDataDependenciesInLoop(stmt, loop, loopStatements);
+        }
+    }
+
+    private void analyzeDataDependenciesInLoop(Stmt stmt, Loop loop, Set<Stmt> loopStatements) {
+        Set<Value> uses = defUseAnalyzer.getUseValues(stmt);
+
+        for (Value usedValue : uses) {
+            for (Stmt defStmt : reachingDefinitions.get(stmt)) {
+                if (loopStatements.contains(defStmt)) {
+                    Set<Value> defs = defUseAnalyzer.getDefValues(defStmt);
+
+                    if (defs.contains(usedValue)) {
+                        analyzeLoopDependencyType(defStmt, stmt, usedValue, loop);
+                    }
+                }
+            }
+        }
+    }
+
+    private void analyzeLoopDependencyType(Stmt defStmt, Stmt useStmt, Value variable, Loop loop) {
+        LoopDependency.Type type = isLoopCarriedDependency(defStmt, useStmt, variable, loop) ?
+                LoopDependency.Type.CARRIED : LoopDependency.Type.INDEPENDENT;
+
+        int distance = type == LoopDependency.Type.CARRIED ?
+                calculateDependencyDistance(defStmt, useStmt, variable, loop) : 0;
+
+        LoopDependency dep = new LoopDependency(type, variable, distance, defStmt, useStmt, loop);
+        loopDependencies.get(useStmt).add(dep);
+    }
+
+    private boolean isLoopCarriedDependency(Stmt defStmt, Stmt useStmt, Value variable, Loop loop) {
+        // Check if the dependency crosses iterations
+        if (hasArrayAccess(defStmt) && hasArrayAccess(useStmt)) {
+            return true;
+        }
+
+        if (isInductionVariable(defStmt, useStmt, variable)) {
+            return true;
+        }
+
+        if (hasMethodCall(defStmt) || hasMethodCall(useStmt)) {
+            return true;
+        }
+
+        if (loop.contains(defStmt) && loop.contains(useStmt)) {
+            return false; // independent dependency
+        }
+
+        // Default: assume carried dependency for safety
+        return true;
+    }
+
+    private boolean hasArrayAccess(Stmt stmt) {
+        for (Value value : defUseAnalyzer.getUseValues(stmt)) {
+            if (value instanceof JArrayRef) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasMethodCall(Stmt stmt) {
+        if (stmt instanceof JAssignStmt) {
+            JAssignStmt assignStmt = (JAssignStmt) stmt;
+            Value rightOp = assignStmt.getRightOp();
+            return rightOp instanceof AbstractInvokeExpr;
+        }
+        return stmt instanceof JInvokeStmt;
+    }
+
+    private boolean isInductionVariable(Stmt defStmt, Stmt useStmt, Value variable) {
+        if (!(defStmt instanceof JAssignStmt)) return false;
+
+        JAssignStmt assignStmt = (JAssignStmt) defStmt;
+        Value rightOp = assignStmt.getRightOp();
+
+        if (!(rightOp instanceof AbstractBinopExpr)) return false;
+
+        AbstractBinopExpr binop = (AbstractBinopExpr) rightOp;
+        Value op1 = binop.getOp1();
+        Value op2 = binop.getOp2();
+
+        boolean isIncrement = (op1.equals(variable) && op2 instanceof IntConstant) ||
+                (op2.equals(variable) && op1 instanceof IntConstant);
+
+        boolean isUsed = defUseAnalyzer.getUseValues(useStmt).contains(variable);
+
+        return isIncrement && isUsed;
+    }
+
+    private int calculateDependencyDistance(Stmt defStmt, Stmt useStmt, Value variable, Loop loop) {
+        if (!(defStmt instanceof JAssignStmt)) return 1;
+
+        JAssignStmt assignStmt = (JAssignStmt) defStmt;
+        Value rightOp = assignStmt.getRightOp();
+
+        if (rightOp instanceof AbstractBinopExpr) {
+            AbstractBinopExpr binop = (AbstractBinopExpr) rightOp;
+            Value op1 = binop.getOp1();
+            Value op2 = binop.getOp2();
+
+            if (op1.equals(variable) && op2 instanceof IntConstant) {
+                return ((IntConstant) op2).getValue();
+            } else if (op2.equals(variable) && op1 instanceof IntConstant) {
+                return ((IntConstant) op1).getValue();
+            }
+        }
+
+        return 1;
     }
 
     // Public API
@@ -241,18 +220,14 @@ public class LoopAnalyzer {
 
     public boolean isInLoop(Stmt stmt) {
         for (Loop loop : loops.values()) {
-            if (loop.contains(stmt)) {
-                return true;
-            }
+            if (loop.contains(stmt)) return true;
         }
         return false;
     }
 
     public Loop getLoopForStatement(Stmt stmt) {
         for (Loop loop : loops.values()) {
-            if (loop.contains(stmt)) {
-                return loop;
-            }
+            if (loop.contains(stmt)) return loop;
         }
         return null;
     }
@@ -261,17 +236,8 @@ public class LoopAnalyzer {
         return Collections.unmodifiableSet(loopDependencies.getOrDefault(stmt, new HashSet<>()));
     }
 
-    public Map<Stmt, Set<LoopDependency>> getAllLoopDependencies() {
-        return Collections.unmodifiableMap(loopDependencies);
-    }
-
     public void printLoopAnalysis() {
         System.out.println("\n=== LOOP ANALYSIS RESULTS ===");
-
-        if (loops.isEmpty()) {
-            System.out.println("No loops found in the method");
-            return;
-        }
 
         for (Loop loop : loops.values()) {
             printLoopInfo(loop, 0);
@@ -280,16 +246,16 @@ public class LoopAnalyzer {
 
     private void printLoopInfo(Loop loop, int depth) {
         StringBuilder indent = new StringBuilder();
-        for (int i = 0; i < depth; i++) {
-            indent.append("  ");
-        }
+        for (int i = 0; i < depth; i++) indent.append("  ");
 
         System.out.println(indent + "Loop Header: " + loop.getHeader());
         System.out.println(indent + "Statements: " + loop.getStatements().size());
-        System.out.println(indent + "Nesting Depth: " + loop.getNestingDepth());
 
         for (Stmt stmt : loop.getStatements()) {
-            System.out.println(indent + "  - " + stmt);
+            Set<LoopDependency> deps = loopDependencies.get(stmt);
+            if (deps != null && !deps.isEmpty()) {
+                System.out.println(indent + "  - " + stmt + " [Dependencies: " + deps.size() + "]");
+            }
         }
 
         for (Loop nested : loop.getNestedLoops()) {
