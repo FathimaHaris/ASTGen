@@ -171,6 +171,8 @@ import java.util.Optional;
                 StmtGraph<?> cfg = body.getStmtGraph();
 
                 // Test loop analysis
+                DefUseAnalyzer defUseAnalyzer = new DefUseAnalyzer(cfg);
+                Map<Stmt, Set<Stmt>> reachingDefs = defUseAnalyzer.computeReachingDefinitions();
                 DominatorAnalyzer domAnalyzer = new DominatorAnalyzer(cfg);
                 LoopAnalyzer loopAnalyzer = new LoopAnalyzer(cfg, domAnalyzer);
                 loopAnalyzer.printLoopAnalysis();

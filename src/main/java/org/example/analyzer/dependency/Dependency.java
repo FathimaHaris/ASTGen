@@ -1,14 +1,15 @@
 package org.example.analyzer.dependency;
 
 import sootup.core.jimple.common.stmt.Stmt;
-import java.util.*;
+import java.util.Objects;
 
 public class Dependency {
     public enum Type {
         RAW,    // Read After Write (true dependency)
         WAR,    // Write After Read (anti-dependency)
         WAW,    // Write After Write (output dependency)
-        CONTROL // Control dependency
+        CONTROL,
+        DEF_ORDER// Control dependency
     }
 
     private Type type;
@@ -31,7 +32,8 @@ public class Dependency {
 
     @Override
     public String toString() {
-        return type + "{" + variable + "}: " + source + " → " + target;
+        return type + "{" + (variable != null ? variable : "control") + "}: " +
+                source + " → " + target;
     }
 
     @Override
@@ -40,9 +42,9 @@ public class Dependency {
         if (obj == null || getClass() != obj.getClass()) return false;
         Dependency that = (Dependency) obj;
         return type == that.type &&
-                source.equals(that.source) &&
-                target.equals(that.target) &&
-                variable.equals(that.variable);
+                Objects.equals(source, that.source) &&
+                Objects.equals(target, that.target) &&
+                Objects.equals(variable, that.variable);
     }
 
     @Override
