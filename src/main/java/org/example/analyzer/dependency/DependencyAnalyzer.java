@@ -41,34 +41,44 @@ public class DependencyAnalyzer {
     }
 
     private void analyzeReachingDefinitions() {
+        Map<Stmt, Set<Stmt>> in = new HashMap<>();
+        Map<Stmt, Set<Stmt>> out = new HashMap<>();
+        Set<Stmt> allStmts = new HashSet<>(cfg.getStmts());
+
         // Initialize
-        for (Stmt stmt : cfg.getStmts()) {
-            reachingDefinitions.put(stmt, new HashSet<>());
+        for (Stmt stmt : allStmts) {
+            in.put(stmt, new HashSet<>());
+            out.put(stmt, new HashSet<>());
         }
 
         boolean changed;
         do {
             changed = false;
-
-            for (Stmt stmt : cfg.getStmts()) {
-                Set<Stmt> newInSet = new HashSet<>();
-
-                // Union of predecessors' OUT sets
+            for (Stmt stmt : allStmts) {
+                // IN[s] = union of OUT[pred] for all predecessors
+                Set<Stmt> newIn = new HashSet<>();
                 for (Stmt pred : cfg.predecessors(stmt)) {
-                    newInSet.addAll(reachingDefinitions.get(pred));
+                    newIn.addAll(out.get(pred));
                 }
 
-                // Apply GEN and KILL
-                Set<Stmt> outSet = new HashSet<>(newInSet);
+                // Update IN set if changed
+                if (!newIn.equals(in.get(stmt))) {
+                    in.put(stmt, newIn);
+                    changed = true;
+                }
 
+                // OUT[s] = GEN[s] ∪ (IN[s] - KILL[s])
                 // GEN: This statement defines variables
+                Set<Stmt> gen = new HashSet<>();
                 if (!defUseAnalyzer.getDefSet(stmt).isEmpty()) {
-                    outSet.add(stmt);
+                    gen.add(stmt);
                 }
 
-                // KILL: Remove definitions that are killed by this statement
+                // KILL: Remove definitions that define the same variables as this statement
+                Set<Stmt> newOut = new HashSet<>(newIn);
                 Set<String> currentDefs = defUseAnalyzer.getDefSet(stmt);
-                Iterator<Stmt> iter = outSet.iterator();
+
+                Iterator<Stmt> iter = newOut.iterator();
                 while (iter.hasNext()) {
                     Stmt defStmt = iter.next();
                     Set<String> defVars = defUseAnalyzer.getDefSet(defStmt);
@@ -80,12 +90,21 @@ public class DependencyAnalyzer {
                     }
                 }
 
-                if (!outSet.equals(reachingDefinitions.get(stmt))) {
-                    reachingDefinitions.put(stmt, outSet);
+                newOut.addAll(gen);
+
+                // Update OUT set if changed
+                if (!newOut.equals(out.get(stmt))) {
+                    out.put(stmt, newOut);
                     changed = true;
                 }
             }
         } while (changed);
+
+        // Copy final OUT sets to reachingDefinitions
+        reachingDefinitions.clear();
+        for (Stmt stmt : allStmts) {
+            reachingDefinitions.put(stmt, out.get(stmt));
+        }
     }
 
     private void analyzeDataDependencies(DependencyResult result) {
@@ -160,6 +179,12 @@ public class DependencyAnalyzer {
     private void analyzeLoopDependencies(DependencyResult result) {
         loopAnalyzer.analyzeLoopDependencies(result);
     }
+
+
+    public Map<Stmt, Set<Stmt>> getReachingDefinitions() {
+        return reachingDefinitions;
+    }
+
 
     // Helper methods
     public void printReachingDefinitions() {
